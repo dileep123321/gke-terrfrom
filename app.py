@@ -1,6 +1,19 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
-class H(BaseHTTPRequestHandler):
+
+
+class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers()
+        self.send_response(200)
+        self.end_headers()
         self.wfile.write(b"Hello from backend v1!")
-HTTPServer(("", 8080), H).serve_forever()
+
+
+def run():
+    server_address = ("", 8080)
+    httpd = HTTPServer(server_address, Handler)
+    httpd.serve_forever()
+
+
+if __name__ == "__main__":
+    run()
+
