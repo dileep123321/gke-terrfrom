@@ -1,4 +1,3 @@
-# tiny example: python http server
 FROM python:3.12-slim
 WORKDIR /app
 COPY app.py /app/app.py
