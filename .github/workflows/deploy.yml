@@ -11,20 +11,19 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      security-events: write  # for security scan reporting
+      security-events: write
 
     env:
       CLUSTER_NAME: dev-gke-autopilot
       IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/${{ secrets.AR_REPO }}/backend:${{ github.sha }}
 
     steps:
-      # Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ====== CODE QUALITY & SCANS ======
+      # ------------ Code checks ------------
 
-      - name: Install Python & deps
+      - name: Install Python tools
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pip
@@ -34,31 +33,32 @@ jobs:
         run: flake8 . --count --max-line-length=120 --statistics
 
       - name: Run Unit Tests (pytest)
-        run: pytest || true   # allow empty/no-tests pass
+        run: pytest || true
 
       - name: Security scan (Bandit)
         run: bandit -r . -ll
 
-      # ----- Install Trivy -----
-      - name: Install Trivy (Vulnerability Scanner)
+      # ------------ Install Trivy (Ubuntu 24.04 Safe Method) ------------
+
+      - name: Install Trivy (official script)
         run: |
-          sudo apt-get install -y wget apt-transport-https gnupg
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo deb https://aquasecurity.github.io/trivy-repo/deb stable main | sudo tee -a /etc/apt/sources.list.d/trivy.list
           sudo apt-get update
-          sudo apt-get install -y trivy
+          sudo apt-get install -y wget
+          wget https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh
+          chmod +x install.sh
+          sudo ./install.sh
 
       - name: Filesystem Scan (Trivy)
-        run: trivy fs --severity HIGH,CRITICAL . || true
+        run: trivy fs --exit-code 0 --severity HIGH,CRITICAL .
 
-      # ====== GCP AUTH & TOOLS ======
+      # ------------ Google Cloud & Kubectl ------------
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Setup gcloud + kubectl + GKE auth plugin
+      - name: Setup gcloud + kubectl + GKE plugin
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT }}
@@ -67,18 +67,18 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
-      # ====== BUILD, SCAN & PUSH IMAGE ======
+      # ------------ Docker Build & Scan ------------
 
       - name: Build Docker Image
         run: docker build -t "$IMAGE" .
 
-      - name: Scan Docker image before push (Trivy)
-        run: trivy image --severity HIGH,CRITICAL "$IMAGE" || true
+      - name: Scan Docker image (Trivy)
+        run: trivy image --exit-code 0 --severity HIGH,CRITICAL "$IMAGE"
 
-      - name: Push Image to Artifact Registry
+      - name: Push image to Artifact Registry
         run: docker push "$IMAGE"
 
-      # ====== DEPLOY TO GKE ======
+      # ------------ Deploy to GKE ------------
 
       - name: Get GKE credentials
         run: |
@@ -91,9 +91,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y gettext-base
           IMAGE="${{ env.IMAGE }}" envsubst < k8s/deployment.yaml | kubectl apply -f -
           kubectl apply -f k8s/service.yaml
-          kubectl rollout status deploy/backend --timeout=180s
+          kubectl rollout status deployment/backend --timeout=180s
 
-      - name: Verify Deployment & Service
+      - name: Verify Deployment and Service
         run: |
           kubectl get pods -o wide
           kubectl get svc
